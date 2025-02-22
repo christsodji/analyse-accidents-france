@@ -1,0 +1,83 @@
+---
+title: "airquality"
+format: html
+editor: visual
+---
+
+```{r}
+library(datasets)
+data("airquality")
+```
+
+
+
+```{r}
+view(airquality)
+```
+
+
+```{r}
+library(naniar)
+miss_var_summary(airquality)
+```
+
+```{r}
+data=na.omit(airquality)
+data
+```
+```{r}
+data=data|>
+  select(-c(Month, Day))
+```
+
+
+```{r}
+pairs(data)
+```
+
+```{r}
+library(corrplot)
+corr_mat=cor(data)
+corrplot(corr_mat) # il prend une matrice de corrélation.
+```
+
+```{r}
+reg=lm(data$Ozone~data$Solar.R+data$Wind+data$Temp)
+summary(reg)
+```
+```{r}
+y_predict<-predict(reg, newdata = data.frame())
+```
+
+Solar.R predit moins l'Ozone.
+
+```{r}
+reg2=lm(data$Ozone~data$Wind+data$Temp)
+```
+
+
+```{r}
+plot(reg2)
+```
+```{r}
+summary(reg2)
+```
+Supperposition
+
+```{r}
+coeffs=coef(reg2)
+coeffs
+```
+
+```{r}
+y_hat=coeffs[1] + coeffs[2]*data$Wind + coeffs[3]*data$Temp
+```
+
+
+
+
+
+
+
+
+
