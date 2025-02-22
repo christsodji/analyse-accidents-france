@@ -1,0 +1,438 @@
+---
+output: html_document
+---
+
+# PROJET R : Groupe 3
+
+### 1. Introduction
+
+Les accidents de la route constituent une problématique majeure de santé publique et de sécurité en France, avec des implications importantes sur les vies humaines et l'économie. L'objectif de ce projet est d'explorer les données relatives aux accidents de la route en France en 2023, disponibles sur la plateforme Open Data du gouvernement français, afin d'identifier les tendances et les facteurs clés associés aux accidents.
+
+### **2. Présentation du Dataset**
+
+Pour chaque accident corporel (soit un accident survenu sur une voie ouverte à la circulation publique, impliquant au moins un véhicule et ayant fait au moins une victime ayant nécessité des soins), des saisies d’information décrivant l’accident sont effectuées par l’unité des forces de l’ordre (police, gendarmerie, etc.) qui est intervenue sur le lieu de l’accident. Ces saisies sont rassemblées dans une fiche intitulée bulletin d’analyse des accidents corporels. L’ensemble de ces fiches constitue le fichier national des accidents corporels de la circulation dit " Fichier BAAC1" administré par l’Observatoire national interministériel de la sécurité routière "ONISR". Les bases de données, extraites du fichier BAAC, répertorient l'intégralité des accidents corporels de la circulation intervenus durant une année précise en France métropolitaine ainsi que les départements d’Outre-mer (Guadeloupe, Guyane, Martinique, La Réunion et Mayotte depuis 2005) avec une description simplifiée. Cela comprend des informations de localisation de l’accident, telles que renseignées ainsi que des informations concernant les caractéristiques de l’accident et son lieu, les véhicules impliqués et leurs victimes. Description des bases de données annuelles des accidents corporels de la circulation routière - Années de 2005 à 2023.
+
+Source Dataset : data.gouv.fr (ministère de l’intérieur)
+
+<https://www.data.gouv.fr/fr/datasets/bases-de-donnees-annuelles-des-accidents-corporels-de-la-circulation-routiere-annees-de-2005-a-2019/>
+
+**Notre base de données est composée de 4 fichiers csv** :
+
+-   **Caractéristique.csv (54822)** lignes) Décrit les circonstances générales de l’accident (types de collisions, luminosité, date)
+
+-   **Lieux.csv (70860 lignes)**: Décrit le lieu principal de l’accident (catégorie route, nb de voies, régime de circulation, surface de la chaussée,…)
+
+-   **Véhicules.csv (93585 lignes)**: Décrit les véhicules impliqués dans l’accident (n° plaque immatriculations, type de véhicule, localisation du choc, manœuvre,…)
+
+-   **Usagers.csv (125789 lignes)**: Décrit les usagers impliqués dans l’accident (place de l’usager dans le véhicule, gravité, trajet de l’usager,…)
+
+Chacune des variables contenues dans une rubrique est reliée aux variables des autres rubriques. Le n° d'identifiant de l’accident (Cf. Num_Acc) présent dans ces 4 rubriques permet d'établir un lien entre toutes les variables qui décrivent un accident. Quand un accident comporte plusieurs véhicules, il est également possible de relier chaque véhicule à ses occupants. Ce lien est fait par la variable Num_veh.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message=FALSE, warning=FALSE)
+```
+
+### 3. Libraries utiles
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(naniar)
+library(skimr)
+library(VIM)
+library(readr)
+library(leaflet)
+library(leaflet.extras)
+```
+
+### 4. Importation et traitementdes données
+
+#### 4.1. Importation des données
+
+```{r, message=FALSE, warning=FALSE}
+usagers <- read_delim("usagers-2023.csv", delim = ";")
+
+lieux <- read_delim("lieux-2023.csv", delim = ";")
+
+vehicules <- read_delim("vehicules-2023.csv", delim = ";")
+
+caract <- read_delim("caract-2023.csv", 
+    delim = ";", escape_double = FALSE, col_types = cols(lat = col_number(), 
+        long = col_number()), trim_ws = TRUE)
+
+
+
+# Fusion des données
+dataFus <- usagers |>  left_join(lieux, by = "Num_Acc")
+dataFus <- dataFus |>  left_join(vehicules, by = "Num_Acc")
+dataFus <- dataFus |>  left_join(caract, by = "Num_Acc")
+```
+
+#### 4.2. Gestion des données manquantes
+
+```{r, warning=FALSE, warning=FALSE}
+skim(dataFus)
+
+gg_miss_var(dataFus)
+
+aggr(dataFus, col = c("blue", "red"), numbers = TRUE, starVars = TRUE, labels = names(dataFus), cex.axis =.7, gap = 3, ylab = c("Valeurs manquantes", "Modèle"))
+
+```
+
+On décide d'amputer les variables lartpc et l'occutc qui sont constituées à près de 99%
+
+Concernant les variables qui possèdent de valeurs manquantes de pourcentage inferieur à 10%, nous allons supprimé les lignes correspondantes sans perte trop d'informations sur le jeu de donnée global. 
+
+#### 4.3. Amputation des données manquantes
+
+```{r}
+dataset <- dataFus[, -c(21, 34)]
+```
+
+#### 4.4. Prétraitement des données
+
+Conversion en facteur de certaines variables:
+
+```{r}
+
+# Création du facteur avec les libellés correspondants
+dataset$lum <- factor(dataset$lum, 
+                               levels = c(1, 2, 3, 4, 5, -1),
+                               labels = c("Plein jour", "Crépuscule ou aube", "Nuit sans éclairage", 
+                                         "Nuit avec éclairage non allumé", "Nuit avec éclairage allumé", "non renseigné"))
+```
+
+```{r}
+
+# Création du facteur avec les libellés correspondants
+dataset$agg_factor <- factor(dataset$agg, 
+                               levels = c(1, 2),
+                               labels = c("Hors agglomération", "En agglomération"))
+```
+
+
+
+```{r}
+
+# Création de la variable "region" avec case_when
+dataset <- dataset|>
+  mutate(
+    region = case_when(
+      # Auvergne-Rhône-Alpes
+      dep %in% c("01", "03", "07", "15", "26", "38", "42", "43", "63", "69", "73", "74") ~ "Auvergne-Rhône-Alpes",
+      
+      # Bourgogne-Franche-Comté
+      dep %in% c("21", "25", "39", "58", "70", "71", "89", "90") ~ "Bourgogne-Franche-Comté",
+      
+      # Bretagne
+      dep %in% c("22", "29", "35", "56") ~ "Bretagne",
+      
+      # Centre-Val de Loire
+      dep %in% c("18", "28", "36", "37", "41", "45") ~ "Centre-Val de Loire",
+      
+      # Corse
+      dep %in% c("2A", "2B") ~ "Corse",
+      
+      # Grand Est
+      dep %in% c("08", "10", "51", "52", "54", "55", "57", "67", "68", "88") ~ "Grand Est",
+      
+      # Hauts-de-France
+      dep %in% c("02", "59", "60", "62", "80") ~ "Hauts-de-France",
+      
+      # Île-de-France
+      dep %in% c("75", "77", "78", "91", "92", "93", "94", "95") ~ "Île-de-France",
+      
+      # Normandie
+      dep %in% c("14", "27", "50", "61", "76") ~ "Normandie",
+      
+      # Nouvelle-Aquitaine
+      dep %in% c("16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87") ~ "Nouvelle-Aquitaine",
+      
+      # Occitanie
+      dep %in% c("09", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82") ~ "Occitanie",
+      
+      # Pays de la Loire
+      dep %in% c("44", "49", "53", "72", "85") ~ "Pays de la Loire",
+      
+      # Provence-Alpes-Côte d'Azur
+      dep %in% c("04", "05", "06", "13", "83", "84") ~ "Provence-Alpes-Côte d'Azur",
+      
+      # Guadeloupe (971)
+      dep == "971" ~ "Guadeloupe",
+      
+      # Martinique (972)
+      dep == "972" ~ "Martinique",
+      
+      # Guyane (973)
+      dep == "973" ~ "Guyane",
+      
+      # La Réunion (974)
+      dep == "974" ~ "La Réunion",
+      
+      # Mayotte (976)
+      dep == "976" ~ "Mayotte",
+      
+      # Autres départements ou inconnus
+      TRUE ~ "Région non identifiée"
+    )
+  )
+
+```
+
+### 5. Quelques graphes des tendances
+
+#### 5.1. Evolution du nombre d'accident et de morts par mois
+
+```{r}
+dataset |> 
+  ggplot(aes(x = mois)) +
+  geom_bar(fill = "#3e4c63") +
+  labs(
+    title = "Le nombre d'accidents de la circulation par mois",
+    x = "Mois",
+    y = "Nombre d'accidents corporels \nde la circulation en France en 2023"
+  ) +
+  theme_minimal()
+
+dataset |> 
+  filter(grav == 2) |> 
+  ggplot() +
+  geom_bar(aes(x = mois)) +
+  labs(
+    title = "Le nombre de morts sur la route par mois",
+    x = "Mois",
+    y = "Nombre de morts sur la route en France en 2023"
+  ) +
+  theme_minimal()
+```
+
+Nous pouvons constaté ici que le nombre d'accidents à connu une montée maximale dans les de Juin, juiellet, Août, Septembre, Octobre, Novembre. Des conclusions partiellels et qui seront confirmées ou infirmées par d'autres analyses sont : conditions météorologiques changeantes (automne-hiver), variation de la luminosité ( journées racourcies à partir de septembre, ce qui peut entrainer une fatigue visuelle pour les conducteurs). Nous avons aussi les périodes estivales (densité de la circulation routière, surtout sur les auto-route).
+
+#### 5.2. Evolution du nombre d'accidents par jour
+
+```{r}
+dataset |> 
+  group_by(jour)|> 
+  summarize(nb_accidents = n())|> 
+  ggplot(aes(x = jour, y = nb_accidents)) +
+  geom_line(color = "#3e4c63") +
+  labs(
+    title = "Nombre d'accodents par jour",
+    x = "Jour de l'année",
+    y = "Nombre moyen d'accidents \npar jour"
+  ) +
+  theme_minimal()
+  scale_x_date(date_labels = "%B")
+
+```
+
+#### 5.3. Les victimes d'accidents en fonction de l'âge et du sexe
+
+```{r, warning=FALSE,message=FALSE}
+dataset |> 
+  filter(grav == 2) |> 
+  mutate(age = 2023 - an_nais)  |> 
+  group_by(age)  |> 
+  summarise(accidenteds_number = n())  |> 
+  group_by(age)  |> 
+  summarize(accidenteds_number = mean(accidenteds_number))  |> 
+  ggplot(aes(x = age, y = accidenteds_number, group = 1)) +
+  geom_vline(aes(xintercept = 25), colour = "#ccd7ea", size = 1) +
+  geom_vline(aes(xintercept = 35), size = 1, colour = "#ccd7ea") +
+  geom_line(color = "#3e4c63", size = 1.5) +
+  labs(
+    title = "Nombre de decès par tranche d'âge",
+    x = "Age",
+    y = "Nombre annuel moyen de morts sur \n la route en fonction de l'age"
+  ) +
+  theme_minimal()
+
+dataset |>
+  filter(catu == 1) |> 
+  filter(sexe >0) |> 
+  group_by(sexe) |> 
+  summarize(accidenteds_number = n()) |> 
+  group_by(sexe) |> 
+  summarize(accidenteds_number = mean(accidenteds_number))  |> 
+  mutate(sexe = factor(sexe, labels = c('Homme', 'Femme')))  |> 
+  ggplot(aes(x = sexe, fill = sexe, y = accidenteds_number)) + 
+  geom_col() +
+  scale_fill_manual(values = c("#2b8cbe", "#fa9fb5")) +
+  guides(fill=FALSE) +
+  labs(
+    title = "Acccidents en fonction du sexe",
+    x = "Sexe",
+    y = "Nombre moyen d'accidents \n de la route par sexe en 2023"
+  ) +
+  theme_minimal()
+```
+
+On constate un pic de la courbe à 23-25 ans. Ce qui traduit l'idée selon laquelle les jeunes sont en majorité impliqués dans les accidents qui leur coûtent leurs vie.
+
+On peut aussi remarquer que les hommes sont les plus impliqués dans les accidents.
+
+#### 5.4. Le nombre d'accidents par région
+
+```{r}
+dataset |> 
+  group_by(region) |> 
+  summarise(nbreAcc = n()) |> 
+  ggplot() +
+  geom_col(aes(x = region, y = nbreAcc, fill = region)) +
+  labs(x = "Région", y = "Nombre d'accidents") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+On constate qu'il y a plus d'accidents dans la région ill-de_France plus que les autres régions. Ce qui pourrait s'expliquer par la densité de la population dans cette région.
+
+#### 5.6. Influence des conditions métorologiques sur les accidents
+
+```{r}
+# Calcul des pourcentages pour chaque modalité de la variable atm
+
+dataset$atm <- factor(dataset$atm, 
+                        levels = c(-1, 1, 2, 3, 4, 5, 6, 7, 8, 9),
+                        labels = c("Non renseigné", 
+                                   "Normale", 
+                                   "Pluie légère", 
+                                   "Pluie forte", 
+                                   "Neige - grêle", 
+                                   "Brouillard - fumée", 
+                                   "Vent fort - tempête", 
+                                   "Temps éblouissant", 
+                                   "Temps couvert", 
+                                   "Autre"))
+
+data_atm <- dataset |>
+  group_by(atm) |>
+  summarise(count = n(), .groups = "drop") |>
+  mutate(percent = round(100 * count / sum(count), 1))  
+
+# Création du camembert
+ggplot(data_atm, aes(x = "", y = percent, fill = atm)) +
+  geom_col(width = 1, color = "white") + 
+  coord_polar(theta = "y") +  # Transformation en diagramme circulaire
+  labs(
+    title = "Répartition des accidents suivants l'atmosphère",
+    fill = "atmosphère",
+    y = NULL,
+    x = NULL
+  ) +
+  geom_text(aes(label = paste0(percent, "%")), 
+            position = position_stack(vjust = 0.5), size = 2) +  # Ajout des pourcentages
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank()
+  )
+```
+
+Bien que cela semble contre intuitif, on peut constater que le nombre d'accidents est fortement élévé dans les conditions météologiques normales. Ceci pourait s'expliquer par des facteurs comportementaux, environementaux et forte exposition aux risques.
+
+#### 5.7. Répartition des modalités de la variable gravité
+
+```{r}
+
+dataset$grav <- factor(dataset$grav, 
+                               levels = c(1, 2, 3, 4, -1),
+                               labels = c("Indemne", "Tué", "Blessé hospitalisé", "Blessé léger", "non renseignés"))
+data_camembert <- dataset |>
+  group_by(grav) |>
+  summarise(count = n(), .groups = "drop") |>
+  mutate(percent = round(100 * count / sum(count), 1))  # Calcul des pourcentages
+
+# Création du camembert
+ggplot(data_camembert, aes(x = "", y = percent, fill = grav)) +
+  geom_col(width = 1, color = "white") +  # Création des segments du camembert
+  coord_polar(theta = "y") +  # Transformation en diagramme circulaire
+  labs(
+    title = "Répartition des modalités de la variable Gravité",
+    fill = "Gravité",
+    y = NULL,
+    x = NULL
+  ) +
+  geom_text(aes(label = paste0(percent, "%")), 
+            position = position_stack(vjust = 0.5), size = 2) +  # Ajout des pourcentages
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank()
+  )
+```
+
+Le nombre de blessé leger et celui de personnes indemne est largement superieur aux nombre de blessé hospitalisé et tué. Mieux, le nombre de tué au cours de l'année est minime devant le nombre d'accidents totals. On esperait pas plus, mais on met juste l'accent sur le fait que gracieusement petit devant le nombre total d'accidents.
+
+#### 5.8. Répartition des accidents suivants l'éclairage
+
+```{r}
+# Calcul des pourcentages pour chaque modalité de la variable lum(luminosité)
+data_lum <- dataset |>
+  group_by(lum) |>
+  summarise(count = n(), .groups = "drop") |>
+  mutate(percent = round(100 * count / sum(count), 1))  
+
+# Création du camembert
+ggplot(data_lum, aes(x = "", y = percent, fill = lum)) +
+  geom_col(width = 1, color = "white") + 
+  coord_polar(theta = "y") +  # Transformation en diagramme circulaire
+  labs(
+    title = "Répartition des accidents suivants la luminosité",
+    fill = "Luminosité",
+    y = NULL,
+    x = NULL
+  ) +
+  geom_text(aes(label = paste0(percent, "%")), 
+            position = position_stack(vjust = 0.5), size = 2) +  # Ajout des pourcentages
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank()
+  )
+
+```
+
+Contre intuitif, le nombre d'accidents en plein jour depasse largement celui des autres luminosité. Ce qui pourrait également s'expliquer par les facteurs comportementaux, environementaux, ...
+
+### 4. Cartographie
+
+```{r, warning=FALSE, message=FALSE}
+deathsData <- dataset |> 
+  filter(!is.na(lat) & !is.na(long) & lat != 0 & long != 0) |> 
+  mutate(Lat = lat / 100000000, Long = long / 100000000) |> 
+  select(Num_Acc, Lat, Long)
+
+# Création de la Heatmap
+leaflet(deathsData) |> 
+  addTiles() |> 
+  setView(lng = 2.213749, lat = 46.227638, zoom = 6) |> 
+  addHeatmap(
+    lng = ~Long, 
+    lat = ~Lat, 
+    blur = 20,        # Douceur de la heatmap
+    max = 0.05,       # Intensité maximale (ajuster selon le dataset)
+    radius = 15       # Taille des points
+  )
+
+
+
+dataset |> 
+      filter(!is.na(lat) & !is.na(long) & lat != 0 & long != 0) |> 
+      mutate(Lat = lat / 100000000, Long = long / 100000000) |> 
+      select(Num_Acc, Lat, Long)
+    
+    leaflet(deathsData) |> 
+      addTiles() |> 
+      setView(lng = 2.213749, lat = 46.227638, zoom = 6) |> 
+      addMarkers(
+        lng = ~Long, 
+        lat = ~Lat, 
+        clusterOptions = markerClusterOptions()
+      )
+```
+
+

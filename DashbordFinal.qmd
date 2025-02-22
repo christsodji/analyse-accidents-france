@@ -1,0 +1,352 @@
+---
+title: "dash"
+output: html_document
+runtime: shiny
+---
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+library(shinydashboard)
+library(ggplot2)
+library(leaflet)
+library(dplyr)
+library(shiny)
+library(plotly)
+library(leaflet.extras)
+library(readr)
+
+usagers <- read_delim("usagers-2023.csv", delim = ";")
+
+lieux <- read_delim("lieux-2023.csv", delim = ";")
+
+vehicules <- read_delim("vehicules-2023.csv", delim = ";")
+
+caract <- read_delim("caract-2023.csv", 
+    delim = ";", escape_double = FALSE, col_types = cols(lat = col_number(), 
+        long = col_number()), trim_ws = TRUE)
+
+# Fusion des données
+dataFus <- usagers |>  left_join(lieux, by = "Num_Acc")
+dataFus <- dataFus |>  left_join(vehicules, by = "Num_Acc")
+dataFus <- dataFus |>  left_join(caract, by = "Num_Acc")
+
+dataset <- dataFus[, -c(21, 34)]
+
+
+# Création de la variable "region" avec case_when
+dataset <- dataset|>
+  mutate(
+    region = case_when(
+      # Auvergne-Rhône-Alpes
+      dep %in% c("01", "03", "07", "15", "26", "38", "42", "43", "63", "69", "73", "74") ~ "Auvergne-Rhône-Alpes",
+      
+      # Bourgogne-Franche-Comté
+      dep %in% c("21", "25", "39", "58", "70", "71", "89", "90") ~ "Bourgogne-Franche-Comté",
+      
+      # Bretagne
+      dep %in% c("22", "29", "35", "56") ~ "Bretagne",
+      
+      # Centre-Val de Loire
+      dep %in% c("18", "28", "36", "37", "41", "45") ~ "Centre-Val de Loire",
+      
+      # Corse
+      dep %in% c("2A", "2B") ~ "Corse",
+      
+      # Grand Est
+      dep %in% c("08", "10", "51", "52", "54", "55", "57", "67", "68", "88") ~ "Grand Est",
+      
+      # Hauts-de-France
+      dep %in% c("02", "59", "60", "62", "80") ~ "Hauts-de-France",
+      
+      # Île-de-France
+      dep %in% c("75", "77", "78", "91", "92", "93", "94", "95") ~ "Île-de-France",
+      
+      # Normandie
+      dep %in% c("14", "27", "50", "61", "76") ~ "Normandie",
+      
+      # Nouvelle-Aquitaine
+      dep %in% c("16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87") ~ "Nouvelle-Aquitaine",
+      
+      # Occitanie
+      dep %in% c("09", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82") ~ "Occitanie",
+      
+      # Pays de la Loire
+      dep %in% c("44", "49", "53", "72", "85") ~ "Pays de la Loire",
+      
+      # Provence-Alpes-Côte d'Azur
+      dep %in% c("04", "05", "06", "13", "83", "84") ~ "Provence-Alpes-Côte d'Azur",
+      
+      # Guadeloupe (971)
+      dep == "971" ~ "Guadeloupe",
+      
+      # Martinique (972)
+      dep == "972" ~ "Martinique",
+      
+      # Guyane (973)
+      dep == "973" ~ "Guyane",
+      
+      # La Réunion (974)
+      dep == "974" ~ "La Réunion",
+      
+      # Mayotte (976)
+      dep == "976" ~ "Mayotte",
+      
+      # Autres départements ou inconnus
+      TRUE ~ "Région non identifiée"
+    )
+  )
+
+
+```
+
+```{r,echo=FALSE, message=FALSE, warning=FALSE}
+# Interface utilisateur
+ui <- dashboardPage(
+  dashboardHeader(title = "Analyse des accidents de circulation en 2023"),
+  dashboardSidebar(
+    sidebarMenu(
+      menuItem("Accueil", tabName = "home", icon = icon("home")),
+      menuItem("Graphiques", tabName = "graphs", icon = icon("chart-bar")),
+      menuItem("Cartographie", tabName = "map", icon = icon("globe"))
+    )
+  ),
+  dashboardBody(
+    tabItems(
+      # Accueil
+      tabItem(tabName = "home",
+              h1("Statistiques des accidents en 2023", align = "center"),
+              h4("Explorez les tendances, les répartitions et la cartographie des accidents de la circulation pour 2023."),
+              br(),
+              fluidRow(
+                valueBoxOutput("accidentsBox"),
+                valueBoxOutput("deathsBox"),
+                valueBoxOutput("regionsBox")
+              )
+      ),
+      
+      # Graphiques
+      tabItem(tabName = "graphs",
+              h2("Visualisations des tendances des accidents"),
+              fluidRow(
+                box(title = "Evolution du nombre d'accidents par mois", status = "primary", solidHeader = TRUE, width = 6,
+                    plotlyOutput("accidentsByMonth")),
+                box(title = "Nombre de morts par mois", status = "danger", solidHeader = TRUE, width = 6,
+                    plotlyOutput("deathsByMonth"))
+              ),
+              fluidRow(
+                box(title = "Nombre d'accidents par jour", status = "info", solidHeader = TRUE, width = 6,
+                    plotlyOutput("accidentsByDay")),
+                box(title = "Décès par tranche d'âge", status = "warning", solidHeader = TRUE, width = 6,
+                    plotlyOutput("deathsByAge"))
+              ),
+              fluidRow(
+                box(title = "Répartition par sexe", status = "success", solidHeader = TRUE, width = 6,
+                    plotlyOutput("accidentsBySex")),
+                box(title = "Répartition par région", status = "primary", solidHeader = TRUE, width = 6,
+                    plotlyOutput("accidentsByRegion"))
+              ),
+              fluidRow(
+                box(title = "Répartition des accidents suivant l'atmosphère", status = "info", solidHeader = TRUE, width = 6,
+                    plotOutput("atmDistribution")),
+                box(title = "Répartition des modalités de la variable gravité", status = "warning", solidHeader = TRUE, width = 6,
+                    plotOutput("gravDistribution"))
+              ),
+              fluidRow(
+                box(title = "Répartition des accidents suivant la luminosité", status = "danger", solidHeader = TRUE, width = 6,
+                    plotOutput("lumDistribution"))
+              )
+      ),
+      
+      # Cartographie
+      tabItem(tabName = "map",
+              h2("Cartographie des accidents en France"),
+              fluidRow(
+                column(width = 6,
+                       box(title = "Carte des emplacements des accidents", status = "primary", solidHeader = TRUE, width = 12,
+                           leafletOutput("heatmap", height = "500px"))
+                ),
+                column(width = 6,
+                       box(title = "Carte de la répartition des accidents par région", status = "info", solidHeader = TRUE, width = 12,
+                           leafletOutput("clusterMap", height = "500px"))
+                )
+              )
+      )
+    )
+  )
+)
+
+# Logiciel serveur
+server <- function(input, output) {
+  
+  # Nombre total d'accidents
+  output$accidentsBox <- renderValueBox({
+    valueBox("309.341", "Total accidents", icon = icon("car-crash"), color = "blue")
+  })
+  
+  # Nombre total de décès
+  output$deathsBox <- renderValueBox({
+    valueBox("6.037", "Total Morts", icon = icon("skull-crossbones"), color = "red")
+  })
+  
+  # Nombre de régions
+  output$regionsBox <- renderValueBox({
+    valueBox("18", "Régions Couvertes", icon = icon("map"), color = "yellow")
+  })
+  
+  # Graphiques interactifs
+  output$accidentsByMonth <- renderPlotly({
+    p <- dataset |> 
+      ggplot(aes(x = mois)) +
+      geom_bar(fill = "#3e4c63") +
+      labs(
+        title = "Nombre d'accidents par mois",
+        x = "Mois",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    ggplotly(p)
+  })
+  
+  output$deathsByMonth <- renderPlotly({
+    p <- dataset |> 
+      filter(grav == 2) |> 
+      ggplot(aes(x = mois)) +
+      geom_bar(fill = "#c0392b") +
+      labs(
+        title = "Nombre de morts par mois",
+        x = "Mois",
+        y = "Nombre de morts"
+      ) +
+      theme_minimal()
+    ggplotly(p)
+  })
+  
+  output$accidentsByDay <- renderPlotly({
+    p <- dataset |> 
+      group_by(jour) |> 
+      summarize(nb_accidents = n()) |> 
+      ggplot(aes(x = jour, y = nb_accidents)) +
+      geom_line(color = "#3e4c63") +
+      labs(
+        title = "Nombre d'accidents par jour",
+        x = "Jour de l'année",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    ggplotly(p)
+  })
+  
+  output$deathsByAge <- renderPlotly({
+    p <- dataset |> 
+      filter(grav == 2) |> 
+      group_by(age) |> 
+      summarize(deaths = n()) |> 
+      ggplot(aes(x = age, y = deaths)) +
+      geom_bar(stat = "identity", fill = "#c0392b") +
+      labs(
+        title = "Décès par tranche d'âge",
+        x = "Tranche d'âge",
+        y = "Nombre de décès"
+      ) +
+      theme_minimal()
+    ggplotly(p)
+  })
+  
+  output$accidentsBySex <- renderPlotly({
+    p <- dataset |> 
+      group_by(sexe) |> 
+      summarize(nb_accidents = n()) |> 
+      ggplot(aes(x = sexe, y = nb_accidents)) +
+      geom_bar(stat = "identity", fill = "#3e4c63") +
+      labs(
+        title = "Accidents par sexe",
+        x = "Sexe",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    ggplotly(p)
+  })
+  
+  output$accidentsByRegion <- renderPlotly({
+    p <- dataset |> 
+      group_by(region) |> 
+      summarize(nb_accidents = n()) |> 
+      ggplot(aes(x = region, y = nb_accidents)) +
+      geom_bar(stat = "identity", fill = "#3e4c63") +
+      labs(
+        title = "Accidents par région",
+        x = "Région",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    ggplotly(p)
+  })
+  
+  output$atmDistribution <- renderPlot({
+    p <- dataset |> 
+      ggplot(aes(x = atm)) +
+      geom_bar(fill = "#3e4c63") +
+      labs(
+        title = "Répartition des accidents suivant l'atmosphère",
+        x = "Atmosphère",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    p
+  })
+  
+  output$gravDistribution <- renderPlot({
+    p <- dataset |> 
+      ggplot(aes(x = grav)) +
+      geom_bar(fill = "#c0392b") +
+      labs(
+        title = "Répartition des accidents suivant la gravité",
+        x = "Gravité",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    p
+  })
+  
+  output$lumDistribution <- renderPlot({
+    p <- dataset |> 
+      ggplot(aes(x = luminosite)) +
+      geom_bar(fill = "#f39c12") +
+      labs(
+        title = "Répartition des accidents suivant la luminosité",
+        x = "Luminosité",
+        y = "Nombre d'accidents"
+      ) +
+      theme_minimal()
+    p
+  })
+  
+  # Carte de la chaleur
+  output$heatmap <- renderLeaflet({
+    deathsData <- dataset |> 
+      filter(!is.na(lat) & !is.na(long) & lat != 0 & long != 0) |> 
+      mutate(Lat = lat / 100000000, Long = long / 100000000) |> 
+      select(Num_Acc, Lat, Long)
+    
+    leaflet(deathsData) %>%
+      addTiles() %>%
+      addCircleMarkers(~Long, ~Lat, radius = 2, color = "red", opacity = 0.5)
+  })
+  
+  # Carte avec clustering
+  output$clusterMap <- renderLeaflet({
+    deathsData <- dataset |> 
+      filter(!is.na(lat) & !is.na(long) & lat != 0 & long != 0) |> 
+      mutate(Lat = lat / 100000000, Long = long / 100000000) |> 
+      select(Num_Acc, Lat, Long)
+    
+    leaflet(deathsData) %>%
+      addTiles() %>%
+      addMarkersCluster(~Long, ~Lat, radius = 2, color = "blue", opacity = 0.5)
+  })
+}
+
+# Lancement de l'application
+shinyApp(ui, server)
+
+```
+
